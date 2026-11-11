@@ -1,0 +1,10 @@
+google-generativeai
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+edge-tts
+imageio[ffmpeg]
+pillow
+numpy
+requests
+python-dotenv

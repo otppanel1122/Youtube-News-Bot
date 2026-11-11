@@ -1,0 +1,12 @@
+.env
+client_secret.json
+token.json
+temp/
+output/
+__pycache__/
+*.mp4
+*.mp3
+*.wav
+*.jpg
+*.png
+*.vtt
