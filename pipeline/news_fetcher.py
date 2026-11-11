@@ -1,20 +1,50 @@
 import os
 import json
+import time
 import random
 import urllib.request
 import xml.etree.ElementTree as ET
 import requests
 from pipeline.config import GEMINI_API_KEY, TARGET_COUNTRIES
 
+HISTORY_FILE = "history.json"
+
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print("[History] Warning reading history:", e)
+    return {
+        "last_upload_timestamp": 0,
+        "covered_topics": []
+    }
+
+def save_history(title):
+    history = load_history()
+    history["last_upload_timestamp"] = int(time.time())
+    if "covered_topics" not in history:
+        history["covered_topics"] = []
+    history["covered_topics"].append(title)
+    if len(history["covered_topics"]) > 60:
+        history["covered_topics"] = history["covered_topics"][-60:]
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2)
+        print(f"[History] Recorded '{title}' into history.json")
+    except Exception as e:
+        print("[History] Error saving history:", e)
+
 def fetch_top_headlines(max_per_country=3):
     headlines = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
-    # Randomly shuffle country check order to ensure fair coverage across runs
     countries = list(TARGET_COUNTRIES.items())
     random.shuffle(countries)
     
-    for country, url in countries[:6]: # Sample 6 countries per run
+    # Query countries to gather current landscape
+    for country, url in countries[:7]:
         try:
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=8) as response:
@@ -33,57 +63,36 @@ def fetch_top_headlines(max_per_country=3):
             
     return headlines
 
-def load_history():
-    history_file = "history.json"
-    if os.path.exists(history_file):
-        try:
-            with open(history_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_history(topic_title):
-    history_file = "history.json"
-    history = load_history()
-    history.append(topic_title)
-    if len(history) > 50:
-        history = history[-50:]
-    try:
-        with open(history_file, "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2)
-    except Exception as e:
-        print("[News] History save error:", e)
-
 PROMPT_TEMPLATE = """
-You are an expert investigative international news anchor and viral video producer.
-Here is a list of live breaking news headlines across key world nations (USA, UK, Germany, France, Italy, India, Japan, Singapore, Sweden, Switzerland):
+You are an expert viral news editor and AI breaking-news monitor.
+Here are the latest live headlines collected across major world powers (USA, UK, Germany, France, Italy, India, Japan, Singapore, Sweden, Switzerland):
 
 {headlines_text}
 
-Previously covered topics to avoid repeating:
+Previously covered topics (DO NOT REPEAT OR COVER THESE AGAIN):
 {history_text}
 
-TASK:
-1. Analyze these headlines and identify the single HIGHEST-HEAT, most urgent, dramatic, or globally consequential breaking news topic.
-2. Produce a rapid-fire, captivating 35-45 second news Short script.
-3. Word count: exactly 85 to 105 words. (Fast, authoritative news anchor pace).
-4. Structure:
-   - Hook (0-5s): Red alert / breaking headline statement that shocks or grips the viewer.
-   - Core Development (5-25s): The key facts, numbers, high-stakes decisions, and geopolitical implications.
-   - Global Fallout (25-35s): Why this matters to citizens and the world economy/politics.
-   - Outro (35-40s): Thought-provoking question asking viewers for their opinion ("Leave your thoughts below and subscribe for breaking updates.").
-5. Provide exactly 5 distinct visual scene descriptions for AI photorealistic editorial/documentary image generation (9:16 vertical, highly detailed, dramatic newsroom/documentary style).
+Context:
+- Current required heat threshold: {threshold}/100.
+(A heat score of 80-100 means extraordinary breaking urgency, major conflict, unexpected market shock, sudden resignation, or historic crisis. 50-79 is significant daily developments.)
 
-Return ONLY a JSON object matching this schema:
+YOUR TASKS:
+1. Identify the single MOST VIRAL, highest-heat breaking news topic among the headlines that hasn't been covered yet.
+2. Rate its virality heat score from 1 to 100 based on shock value, global interest, and timeliness.
+3. If the score is BELOW {threshold}, set "eligible": false.
+4. If the score is AT OR ABOVE {threshold}, set "eligible": true and generate a complete viral 35-45 second Short script (85-105 words, high-tempo, dramatic hook, hard facts, outro question) and 5 detailed photorealistic documentary scene prompts.
+
+Return ONLY a JSON object with this EXACT schema:
 {{
+  "heat_score": 85,
+  "eligible": true,
   "country": "NAME_OF_COUNTRY",
-  "title": "Shocking/Urgent Headline with Flag Emoji #Shorts #News",
-  "description": "2-3 sentence overview of the breaking event with relevant news hashtags.",
-  "tags": ["news", "breaking news", "world news", "current affairs", "country_name", "shorts"],
+  "title": "Dramatic Urgent Headline with Flag Emoji #Shorts #News",
+  "description": "2-3 sentence overview with hashtags",
+  "tags": ["news", "breaking news", "world news", "country_name", "shorts"],
   "script": "The 85-105 word spoken narration text.",
   "scenes": [
-    "Scene 1: Detailed cinematic editorial photo prompt, 9:16 vertical, photorealistic news photojournalism",
+    "Scene 1: Detailed cinematic photo prompt, 9:16 vertical, photorealistic news photojournalism",
     "Scene 2...",
     "Scene 3...",
     "Scene 4...",
@@ -92,21 +101,43 @@ Return ONLY a JSON object matching this schema:
 }}
 """
 
-def generate_news_story():
-    print("[News] Fetching live headlines across target nations...")
-    headlines = fetch_top_headlines()
+def evaluate_and_generate_news():
     history = load_history()
+    last_ts = history.get("last_upload_timestamp", 0)
+    hours_since_last = (time.time() - last_ts) / 3600.0 if last_ts > 0 else 999.0
     
+    # Schedule Logic:
+    # If >= 10 hours since last video, window is open for the guaranteed 2 daily shorts (threshold = 55)
+    # If < 10 hours, only post if genuine high-heat breaking news spike occurs (threshold = 80)
+    if hours_since_last >= 10.0:
+        threshold = 55
+        mode = "Scheduled Daily News Window"
+    else:
+        threshold = 80
+        mode = "Breaking Viral Heat Monitor"
+        
+    print(f"\n[Monitor] Mode: {mode}")
+    print(f"[Monitor] Hours since last upload: {hours_since_last:.1f}h | Heat threshold: {threshold}/100")
+    
+    headlines = fetch_top_headlines()
+    if not headlines:
+        print("[News] No headlines fetched from RSS feeds.")
+        return None
+        
     headlines_text = "\n".join([f"- [{h['country']}] {h['title']}" for h in headlines])
-    history_text = "\n".join([f"- {h}" for h in history[-10:]])
+    history_text = "\n".join([f"- {h}" for h in history.get("covered_topics", [])[-15:]])
     
-    prompt = PROMPT_TEMPLATE.format(headlines_text=headlines_text, history_text=history_text)
+    prompt = PROMPT_TEMPLATE.format(
+        headlines_text=headlines_text,
+        history_text=history_text,
+        threshold=threshold
+    )
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={GEMINI_API_KEY}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.75, "response_mime_type": "application/json"}
+        "generationConfig": {"temperature": 0.7, "response_mime_type": "application/json"}
     }
     
     try:
@@ -114,34 +145,21 @@ def generate_news_story():
         if resp.status_code == 200:
             data = resp.json()
             text = data["candidates"][0]["content"]["parts"][0]["text"]
-            story = json.loads(text)
-            print(f"[News] Selected High-Heat Story ({story.get('country')}): {story.get('title')}")
-            save_history(story.get("title"))
-            return story
+            result = json.loads(text)
+            
+            score = result.get("heat_score", 0)
+            eligible = result.get("eligible", False)
+            print(f"[Monitor] Evaluated Top Story: '{result.get('title')}'")
+            print(f"[Monitor] Heat Score: {score}/100 | Threshold: {threshold} | Eligible: {eligible}")
+            
+            if eligible and score >= threshold:
+                return result
+            else:
+                print(f"[Monitor] Story heat score ({score}) did not meet threshold ({threshold}). Standing by for next 30-min scan.")
+                return None
         else:
-            print(f"[News] Gemini API error {resp.status_code}: {resp.text[:200]}")
+            print(f"[News] Gemini API status {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
-        print("[News] Error generating story via Gemini:", e)
+        print("[News] Error evaluating news with Gemini:", e)
         
-    # Fallback high-heat template
-    fallback = {
-        "country": "USA",
-        "title": "🚨 URGENT: Major Global Economic Shift Underway 🇺🇸 #Shorts #News",
-        "description": "Breaking international updates as global central banks convene over currency volatility. #news #worldnews #economy",
-        "tags": ["breaking news", "world news", "usa", "economy", "geopolitics", "shorts"],
-        "script": (
-            "Breaking news from Washington. Global financial markets are reacting sharply as new international trade "
-            "regulations take effect across major economies. Officials in Europe and Asia are holding emergency meetings "
-            "to assess the currency impact and supply chain shifts. Experts warn that supply routes between the West "
-            "and Pacific allies could face unprecedented realignments by the end of this quarter. "
-            "Is the global economy heading toward a reset? Drop your opinion below and subscribe for daily breaking reports."
-        ),
-        "scenes": [
-            "Press conference at the US Capitol with flashing camera lights and international microphones, cinematic news lighting, 9:16 vertical",
-            "Global stock market digital trading board glowing with red and green numbers in modern financial center, 9:16 vertical",
-            "International leaders sitting at a diplomatic summit table discussing urgent global affairs, photorealistic news photo, 9:16 vertical",
-            "Huge container cargo ships crossing busy international shipping channel at dusk, dramatic lighting, 9:16 vertical",
-            "World map glowing with trade and communication network lines on digital screen in news control room, 9:16 vertical"
-        ]
-    }
-    return fallback
+    return None
