@@ -1,10 +1,49 @@
 import os
+import base64
 import urllib.parse
 import time
 import requests
 from PIL import Image
+from pipeline.config import GEMINI_API_KEY
+
+def try_gemini_image_generation(prompt):
+    """
+    Attempts to generate high-resolution image using Gemini Pro Image models.
+    Requires billing enabled on Google Cloud / AI Studio project.
+    """
+    if not GEMINI_API_KEY:
+        return None
+        
+    models = ["gemini-3-pro-image", "gemini-2.5-flash-image"]
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{"parts": [{"text": f"Generate a photorealistic 8k news editorial photojournalism vertical 9:16 image of: {prompt}"}]}]
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                for p in parts:
+                    if "inlineData" in p and p["inlineData"].get("data"):
+                        print(f"[Image] Successfully generated image via Google Gemini ({model})!")
+                        return base64.b64decode(p["inlineData"]["data"])
+        except Exception:
+            pass
+    return None
 
 def download_news_image(prompt, output_path, max_retries=3):
+    # 1. Try Gemini Pro Image first
+    print("[Image] Checking Gemini Pro Image model...")
+    gemini_bytes = try_gemini_image_generation(prompt)
+    if gemini_bytes:
+        with open(output_path, "wb") as f:
+            f.write(gemini_bytes)
+        print(f"[Image] Saved Gemini Pro image to {output_path}")
+        return True
+        
+    # 2. High-res Flux fallback
     enhanced_prompt = f"{prompt}, professional photojournalism, high quality 8k photography, reuters documentary style, cinematic atmospheric lighting, 9:16 vertical"
     encoded = urllib.parse.quote(enhanced_prompt)
     seed = int(time.time() * 1000) % 1000000
@@ -27,7 +66,6 @@ def download_news_image(prompt, output_path, max_retries=3):
             print(f"[Image] Attempt {attempt+1} warning: {e}")
             time.sleep(3)
             
-    # Fallback to high-contrast graphic placeholder if network timeout
     print(f"[Image] Creating stylized editorial fallback for {output_path}")
     from PIL import ImageDraw
     fallback_img = Image.new("RGB", (768, 1344), color=(15, 20, 30))
