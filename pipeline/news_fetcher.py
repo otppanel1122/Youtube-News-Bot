@@ -107,11 +107,11 @@ def evaluate_and_generate_news():
     hours_since_last = (time.time() - last_ts) / 3600.0 if last_ts > 0 else 999.0
     
     # Schedule Logic:
-    # If >= 10 hours since last video, window is open for the guaranteed 2 daily shorts (threshold = 55)
-    # If < 10 hours, only post if genuine high-heat breaking news spike occurs (threshold = 80)
-    if hours_since_last >= 10.0:
+    # Every 5.5 hours (~4 times a day), window opens to ensure 3-4 daily flagship news shorts (threshold = 55)
+    # Between windows, only post if genuine high-heat breaking news spike occurs (threshold = 80)
+    if hours_since_last >= 5.5:
         threshold = 55
-        mode = "Scheduled Daily News Window"
+        mode = "Scheduled 4x Daily News Window"
     else:
         threshold = 80
         mode = "Breaking Viral Heat Monitor"
