@@ -10,3 +10,5 @@ __pycache__/
 *.jpg
 *.png
 *.vtt
+node_modules/
+package-lock.json
